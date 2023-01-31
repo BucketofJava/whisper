@@ -265,7 +265,7 @@ class GreedyDecoder(TokenDecoder):
         tokens = torch.cat([tokens, next_tokens[:, None]], dim=-1)
 
         completed = (tokens[:, -1] == self.eot).all()
-        return tokens, completed
+        return tokens, completed, logprobs
 
     def finalize(self, tokens: Tensor, sum_logprobs: Tensor):
         # make sure each sequence has at least one EOT token at the end
@@ -341,7 +341,7 @@ class BeamSearchDecoder(TokenDecoder):
         completed = all(
             len(sequences) >= self.max_candidates for sequences in self.finished_sequences
         )
-        return tokens, completed
+        return tokens, completed, logprobs
 
     def finalize(self, preceding_tokens: Tensor, sum_logprobs: Tensor):
         # collect all finished sequences, including patience, and add unfinished ones if not enough
@@ -583,7 +583,7 @@ class DecodingTask:
         n_batch = tokens.shape[0]
         sum_logprobs: Tensor = torch.zeros(n_batch, device=audio_features.device)
         no_speech_probs = [np.nan] * n_batch
-
+        logprobs=[]
         try:
             for i in range(self.sample_len):
                 logits = self.inference.logits(tokens, audio_features)
@@ -600,14 +600,14 @@ class DecodingTask:
                     logit_filter.apply(logits, tokens)
 
                 # expand the tokens tensor with the selected next tokens
-                tokens, completed = self.decoder.update(tokens, logits, sum_logprobs)
-
+                tokens, completed, logprob = self.decoder.update(tokens, logits, sum_logprobs)
+                logprobs.append(logprob)
                 if completed or tokens.shape[-1] > self.n_ctx:
                     break
         finally:
             self.inference.cleanup_caching()
 
-        return tokens, sum_logprobs, no_speech_probs
+        return tokens, sum_logprobs, no_speech_probs, logprobs
 
     @torch.no_grad()
     def run(self, mel: Tensor) -> List[DecodingResult]:
@@ -631,7 +631,7 @@ class DecodingTask:
         tokens = tokens.repeat_interleave(self.n_group, dim=0).to(audio_features.device)
 
         # call the main sampling loop
-        tokens, sum_logprobs, no_speech_probs = self._main_loop(audio_features, tokens)
+        tokens, sum_logprobs, no_speech_probs, logprobs = self._main_loop(audio_features, tokens)
 
         # reshape the tensors to have (n_audio, n_group) as the first two dimensions
         audio_features = audio_features[:: self.n_group]
@@ -671,7 +671,7 @@ class DecodingTask:
                 compression_ratio=compression_ratio(text),
             )
             for text, language, tokens, features, avg_logprob, no_speech_prob in zip(*fields)
-        ]
+        ], logprobs;
 
 
 @torch.no_grad()
