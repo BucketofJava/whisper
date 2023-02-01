@@ -671,7 +671,7 @@ class DecodingTask:
                 compression_ratio=compression_ratio(text),
             )
             for text, language, tokens, features, avg_logprob, no_speech_prob in zip(*fields)
-        ], logprobs;
+        ], logprobs, self.tokenizer;
 
 
 @torch.no_grad()
